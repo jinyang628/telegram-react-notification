@@ -3,7 +3,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import Update, constants
 from telegram.ext import (ApplicationBuilder, CommandHandler, ContextTypes,
                           MessageReactionHandler)
 
@@ -12,6 +12,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN is not set")
 
+# How long to wait before tagging the user in the group
 DELAY_HOURS = 0.001
 DB_PATH = "reactions.db"
 
@@ -36,14 +37,14 @@ def init_db():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Got it! I’ll message you later if you react to the group message."
+        "✅ Bot active! React to messages and I'll tag you here shortly."
     )
 
 
 # ---------- REACTION HANDLER ----------
 async def on_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reaction = update.message_reaction
-    if not reaction:
+    if not reaction or not reaction.user:
         return
 
     user_id = reaction.user.id
@@ -76,31 +77,40 @@ async def on_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
 
-# ---------- JOB QUEUE WORKER (Replaces dm_worker) ----------
-async def check_pending_dms(context: ContextTypes.DEFAULT_TYPE):
+# ---------- JOB QUEUE WORKER (Group Tagging) ----------
+async def check_pending_mentions(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(timezone.utc).isoformat()
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
     cur.execute(
-        "SELECT user_id, message_id FROM pending_dm WHERE sent = 0 AND scheduled_at <= ?",
+        "SELECT user_id, chat_id, message_id FROM pending_dm WHERE sent = 0 AND scheduled_at <= ?",
         (now,),
     )
     rows = cur.fetchall()
 
-    for user_id, message_id in rows:
+    for user_id, chat_id, message_id in rows:
         try:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text="👋 You reacted earlier — here’s the follow-up I promised.",
+            # Using HTML instead of MarkdownV2 to avoid "reserved character" errors
+            # This creates a clickable mention using the user's ID
+            mention_text = (
+                f'Hey <a href="tg://user?id={user_id}">user</a>, '
+                f"thanks for the reaction! Here is the info I promised."
             )
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=mention_text,
+                parse_mode=constants.ParseMode.HTML,  # Changed to HTML
+                reply_to_message_id=message_id,
+            )
+
             cur.execute(
                 "UPDATE pending_dm SET sent = 1 WHERE user_id = ? AND message_id = ?",
                 (user_id, message_id),
             )
         except Exception as e:
-            # Usually if the user hasn't started the bot or blocked it
-            print(f"Failed to send DM to {user_id}: {e}")
+            print(f"Error tagging user {user_id} in chat {chat_id}: {e}")
             cur.execute(
                 "DELETE FROM pending_dm WHERE user_id = ? AND message_id = ?",
                 (user_id, message_id),
@@ -114,17 +124,15 @@ async def check_pending_dms(context: ContextTypes.DEFAULT_TYPE):
 def main():
     init_db()
 
-    # Build the application
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Add handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageReactionHandler(on_reaction))
 
-    job_queue = app.job_queue
-    job_queue.run_repeating(check_pending_dms, interval=5)
+    # Check for pending tags every 10 seconds
+    app.job_queue.run_repeating(check_pending_mentions, interval=2)
 
-    print("Bot is running...")
+    print("Bot is running... Monitoring reactions for group tagging...")
 
     app.run_polling(allowed_updates=["message", "callback_query", "message_reaction"])
 
