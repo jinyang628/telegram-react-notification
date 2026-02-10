@@ -1,19 +1,23 @@
 import asyncio
 import sqlite3
+import os
 from datetime import datetime, timedelta, timezone
-
+from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
     MessageReactionHandler,
+    CommandHandler,
 )
 
-BOT_TOKEN = "YOUR_BOT_TOKEN"
-DELAY_HOURS = 3
+load_dotenv()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN is not set")
 
+DELAY_HOURS = 0.001
 DB_PATH = "reactions.db"
-
 
 # ---------- DB SETUP ----------
 def init_db():
@@ -34,6 +38,10 @@ def init_db():
     conn.commit()
     conn.close()
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👋 Got it! I’ll message you later if you react to the group message."
+    )
 
 # ---------- REACTION HANDLER ----------
 async def on_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -48,7 +56,6 @@ async def on_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
-    # reaction added
     if reaction.new_reaction:
         scheduled_time = (
             datetime.now(timezone.utc) + timedelta(hours=DELAY_HOURS)
@@ -62,85 +69,65 @@ async def on_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
             """,
             (user_id, chat_id, message_id, scheduled_time),
         )
-
-    # reaction removed → cancel DM
     else:
         cur.execute(
-            """
-            DELETE FROM pending_dm
-            WHERE user_id = ? AND message_id = ?
-            """,
+            "DELETE FROM pending_dm WHERE user_id = ? AND message_id = ?",
             (user_id, message_id),
         )
 
     conn.commit()
     conn.close()
 
+# ---------- JOB QUEUE WORKER (Replaces dm_worker) ----------
+async def check_pending_dms(context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now(timezone.utc).isoformat()
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
 
-# ---------- WORKER ----------
-async def dm_worker(app):
-    while True:
-        now = datetime.now(timezone.utc).isoformat()
+    cur.execute(
+        "SELECT user_id, message_id FROM pending_dm WHERE sent = 0 AND scheduled_at <= ?",
+        (now,),
+    )
+    rows = cur.fetchall()
 
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.cursor()
+    for user_id, message_id in rows:
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="👋 You reacted earlier — here’s the follow-up I promised.",
+            )
+            cur.execute(
+                "UPDATE pending_dm SET sent = 1 WHERE user_id = ? AND message_id = ?",
+                (user_id, message_id),
+            )
+        except Exception as e:
+            # Usually if the user hasn't started the bot or blocked it
+            print(f"Failed to send DM to {user_id}: {e}")
+            cur.execute(
+                "DELETE FROM pending_dm WHERE user_id = ? AND message_id = ?",
+                (user_id, message_id),
+            )
 
-        cur.execute(
-            """
-            SELECT user_id, message_id
-            FROM pending_dm
-            WHERE sent = 0 AND scheduled_at <= ?
-            """,
-            (now,),
-        )
-
-        rows = cur.fetchall()
-
-        for user_id, message_id in rows:
-            try:
-                await app.bot.send_message(
-                    chat_id=user_id,
-                    text="👋 You reacted earlier — here’s the follow-up I promised.",
-                )
-
-                cur.execute(
-                    """
-                    UPDATE pending_dm
-                    SET sent = 1
-                    WHERE user_id = ? AND message_id = ?
-                    """,
-                    (user_id, message_id),
-                )
-
-            except Exception:
-                # User never started bot / blocked bot
-                cur.execute(
-                    """
-                    DELETE FROM pending_dm
-                    WHERE user_id = ? AND message_id = ?
-                    """,
-                    (user_id, message_id),
-                )
-
-        conn.commit()
-        conn.close()
-
-        await asyncio.sleep(60)  # check every minute
-
+    conn.commit()
+    conn.close()
 
 # ---------- MAIN ----------
-async def main():
+def main():
     init_db()
 
+    # Build the application
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # Add handlers
+    app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageReactionHandler(on_reaction))
 
-    asyncio.create_task(dm_worker(app))
+    job_queue = app.job_queue
+    job_queue.run_repeating(check_pending_dms, interval=5)
 
-    print("Bot running...")
-    await app.run_polling()
-
+    print("Bot is running...")
+    
+    app.run_polling(allowed_updates=["message", "callback_query", "message_reaction"])
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
