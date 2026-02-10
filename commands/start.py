@@ -49,11 +49,11 @@ def _get_notify_time(game_time: str) -> str:
 async def start_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
 
-    raw_time: str | None = _get_named_arg(args, "reminder")
+    raw_time: str | None = _get_named_arg(args, "time")
     raw_threshold: str | None = _get_named_arg(args, "threshold")
     if not raw_time or not raw_threshold:
         await update.message.reply_text(
-            "Please issue a command with the format `/start reminder=HH:MM threshold=X`",
+            "Please issue a command with the format `/start time=HH:MM threshold=X`",
             parse_mode=constants.ParseMode.MARKDOWN,
         )
         return
@@ -91,11 +91,13 @@ async def start_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     chat_id = sent_message.chat_id
     message_id = sent_message.message_id
+    await context.bot.pin_chat_message(
+        chat_id=chat_id, message_id=message_id, disable_notification=False
+    )
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     notify_time: str = _get_notify_time(game_time)
-    print(notify_time)
 
     cur.execute(
         "INSERT OR REPLACE INTO monitored_message (id, chat_id, message_id, notify_time, threshold) VALUES (1, ?, ?, ?, ?)",
