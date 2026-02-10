@@ -5,53 +5,41 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from telegram import Update, constants
 from telegram.ext import (ApplicationBuilder, CommandHandler, ContextTypes,
-                          MessageReactionHandler)
+                          MessageHandler, MessageReactionHandler, filters)
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN is not set")
+BOT_USERNAME = "@MessageReactorsBot"
 
 DELAY_HOURS = 0.001
 DB_PATH = "reactions.db"
 
 
-# ---------- DB SETUP ----------
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS pending_dm (
-            user_id INTEGER,
-            chat_id INTEGER,
-            message_id INTEGER,
-            scheduled_at TEXT,
-            sent INTEGER DEFAULT 0,
-            PRIMARY KEY (user_id, message_id)
-        )
-        """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS monitored_message (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            chat_id INTEGER,
-            message_id INTEGER
-        )
-        """)
+    cur.execute(
+        "CREATE TABLE IF NOT EXISTS pending_dm (user_id INTEGER, chat_id INTEGER, message_id INTEGER, scheduled_at TEXT, sent INTEGER DEFAULT 0, PRIMARY KEY (user_id, message_id))"
+    )
+    cur.execute(
+        "CREATE TABLE IF NOT EXISTS monitored_message (id INTEGER PRIMARY KEY CHECK (id = 1), chat_id INTEGER, message_id INTEGER)"
+    )
     conn.commit()
     conn.close()
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 Bot active! Reply to a message with /monitor to start tracking reactions."
-    )
-
-
-# ---------- MONITOR COMMAND ----------
-async def monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def monitor_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    This handles both the standard /monitor command AND
+    when someone types '@BotName /monitor'
+    """
+    # 1. Ensure it's a reply
     if not update.message.reply_to_message:
         await update.message.reply_text(
-            "❌ Please **reply** to the message you want to monitor."
+            "⚠️ **Explicit Action Required**\n\n"
+            "To monitor a message, you must **reply** to that specific message "
+            "with `/monitor` or mention me.",
+            parse_mode=constants.ParseMode.MARKDOWN,
         )
         return
 
@@ -69,13 +57,17 @@ async def monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     conn.close()
 
-    print(f"DEBUG: Now monitoring Chat {chat_id}, Msg {message_id}")
+    # Visual Confirmation
     await update.message.reply_text(
-        f"🎯 Monitoring reactions for message {message_id}."
+        f"🎯 **Target Locked**\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"📝 **Monitoring Msg ID:** `{message_id}`\n"
+        f"👥 **Action:** I will tag anyone who reacts to the message above.\n\n"
+        f"_Note: Any previous monitored messages have been cleared._",
+        parse_mode=constants.ParseMode.MARKDOWN,
     )
 
 
-# ---------- REACTION HANDLER ----------
 async def on_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reaction = update.message_reaction
     if not reaction or not reaction.user:
@@ -87,42 +79,22 @@ async def on_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-
-    # Get the currently monitored message
-    cur.execute("SELECT chat_id, message_id FROM monitored_message WHERE id = 1")
+    cur.execute("SELECT message_id FROM monitored_message WHERE id = 1")
     row = cur.fetchone()
 
-    if not row:
-        print("DEBUG: No message is currently being monitored.")
-        conn.close()
-        return
-
-    monitored_chat_id, monitored_msg_id = row
-
-    # DEBUG LINE: See what the bot is comparing
-    print(f"DEBUG: Reaction on Msg {message_id} | Monitored Msg: {monitored_msg_id}")
-
-    if message_id != monitored_msg_id:
-        # Ignore reactions on other messages
+    if not row or row[0] != message_id:
         conn.close()
         return
 
     if reaction.new_reaction:
-        print(f"DEBUG: Valid reaction from {user_id}. Scheduling mention...")
         scheduled_time = (
             datetime.now(timezone.utc) + timedelta(hours=DELAY_HOURS)
         ).isoformat()
-
         cur.execute(
-            """
-            INSERT OR REPLACE INTO pending_dm
-            (user_id, chat_id, message_id, scheduled_at, sent)
-            VALUES (?, ?, ?, ?, 0)
-            """,
+            "INSERT OR REPLACE INTO pending_dm (user_id, chat_id, message_id, scheduled_at, sent) VALUES (?, ?, ?, ?, 0)",
             (user_id, chat_id, message_id, scheduled_time),
         )
     else:
-        print(f"DEBUG: Reaction removed by {user_id}.")
         cur.execute(
             "DELETE FROM pending_dm WHERE user_id = ? AND message_id = ?",
             (user_id, message_id),
@@ -132,12 +104,10 @@ async def on_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
 
-# ---------- JOB QUEUE WORKER ----------
 async def check_pending_mentions(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(timezone.utc).isoformat()
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-
     cur.execute(
         "SELECT user_id, chat_id, message_id FROM pending_dm WHERE sent = 0 AND scheduled_at <= ?",
         (now,),
@@ -146,25 +116,18 @@ async def check_pending_mentions(context: ContextTypes.DEFAULT_TYPE):
 
     for user_id, chat_id, message_id in rows:
         try:
-            print(f"DEBUG: Attempting to tag user {user_id} in chat {chat_id}")
-            mention_text = (
-                f'Hey <a href="tg://user?id={user_id}">user</a>, '
-                f"thanks for the reaction!"
-            )
-
+            mention_text = f'Hey <a href="tg://user?id={user_id}">user</a>, thanks for the reaction!'
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=mention_text,
                 parse_mode=constants.ParseMode.HTML,
                 reply_to_message_id=message_id,
             )
-
             cur.execute(
                 "UPDATE pending_dm SET sent = 1 WHERE user_id = ? AND message_id = ?",
                 (user_id, message_id),
             )
-        except Exception as e:
-            print(f"ERROR in worker: {e}")
+        except Exception:
             cur.execute(
                 "DELETE FROM pending_dm WHERE user_id = ? AND message_id = ?",
                 (user_id, message_id),
@@ -174,15 +137,23 @@ async def check_pending_mentions(context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
 
-# ---------- MAIN ----------
 def main():
     init_db()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("monitor", monitor))
-    app.add_handler(MessageReactionHandler(on_reaction))
 
-    # Run check every 2 seconds
+    # This handles:
+    # 1. /monitor
+    # 2. /monitor@MessageReactorsBot
+    # 3. Typing @MessageReactorsBot and selecting 'monitor' from the pop-up list
+    # 4. The bot being mentioned with the word monitor
+    app.add_handler(CommandHandler("monitor", monitor_trigger))
+    app.add_handler(
+        MessageHandler(
+            filters.Mention(BOT_USERNAME) & filters.Regex(r"monitor"), monitor_trigger
+        )
+    )
+
+    app.add_handler(MessageReactionHandler(on_reaction))
     app.job_queue.run_repeating(check_pending_mentions, interval=2)
 
     print("Bot is running...")
