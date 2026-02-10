@@ -9,16 +9,17 @@ from telegram import Update, constants
 from telegram.ext import (ApplicationBuilder, CommandHandler, ContextTypes,
                           MessageHandler, MessageReactionHandler, filters)
 
-from commands import kill_monitor, monitor_trigger
-from constants import DB_PATH, DELAY_HOURS
+from commands.kill import kill_monitor
+from commands.monitor import monitor_trigger
+from constants import DB_PATH, DELAY_HOURS, POLL_INTERVAL
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+logging.basicConfig(format="%(levelname)s - %(message)s", level=logging.INFO)
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 BOT_USERNAME = "@MessageReactorsBot"
+
+SGT_TZ = timezone(timedelta(hours=8))
 
 
 def init_db():
@@ -35,10 +36,23 @@ def init_db():
         cur.execute("ALTER TABLE pending_dm ADD COLUMN full_name TEXT")
 
     cur.execute(
-        "CREATE TABLE IF NOT EXISTS monitored_message (id INTEGER PRIMARY KEY CHECK (id = 1), chat_id INTEGER, message_id INTEGER)"
+        "CREATE TABLE IF NOT EXISTS monitored_message (id INTEGER PRIMARY KEY CHECK (id = 1), chat_id INTEGER, message_id INTEGER, notify_time TEXT)"
     )
+    cur.execute("PRAGMA table_info(monitored_message)")
+    columns = [column[1] for column in cur.fetchall()]
+    if "notify_time" not in columns:
+        cur.execute("ALTER TABLE monitored_message ADD COLUMN notify_time TEXT")
     conn.commit()
     conn.close()
+
+
+def _next_sgt_occurrence_utc(hh: int, mm: int) -> datetime:
+    now_utc = datetime.now(timezone.utc)
+    now_sgt = now_utc.astimezone(SGT_TZ)
+    candidate_sgt = now_sgt.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    if candidate_sgt <= now_sgt:
+        candidate_sgt = candidate_sgt + timedelta(days=1)
+    return candidate_sgt.astimezone(timezone.utc)
 
 
 async def on_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -53,17 +67,27 @@ async def on_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute("SELECT message_id FROM monitored_message WHERE id = 1")
+    cur.execute(
+        "SELECT chat_id, message_id, notify_time FROM monitored_message WHERE id = 1"
+    )
     row = cur.fetchone()
 
-    if not row or row[0] != message_id:
+    if not row or row[1] != message_id:
         conn.close()
         return
+    notify_time = row[2]
 
     if reaction.new_reaction:
-        sched = (datetime.now(timezone.utc) + timedelta(hours=DELAY_HOURS)).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
+        if notify_time:
+            try:
+                hh_str, mm_str = notify_time.split(":", 1)
+                sched_dt = _next_sgt_occurrence_utc(int(hh_str), int(mm_str))
+            except Exception:
+                sched_dt = datetime.now(timezone.utc) + timedelta(hours=DELAY_HOURS)
+        else:
+            sched_dt = datetime.now(timezone.utc) + timedelta(hours=DELAY_HOURS)
+
+        sched = sched_dt.strftime("%Y-%m-%d %H:%M:%S")
         cur.execute(
             "INSERT OR REPLACE INTO pending_dm (user_id, chat_id, message_id, full_name, scheduled_at, sent) VALUES (?, ?, ?, ?, ?, 0)",
             (user_id, chat_id, message_id, user_name, sched),
@@ -141,9 +165,7 @@ def main():
         )
     )
     app.add_handler(MessageReactionHandler(on_reaction))
-    app.job_queue.run_repeating(check_pending_mentions, interval=2)
-
-    print("Bot started...")
+    app.job_queue.run_repeating(check_pending_mentions, interval=POLL_INTERVAL)
     app.run_polling(allowed_updates=["message", "callback_query", "message_reaction"])
 
 

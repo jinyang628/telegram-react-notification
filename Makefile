@@ -3,7 +3,7 @@
 lint:
 	black .
 	isort .
-	autoflake --in-place --recursive .
+	autoflake --in-place --recursive --remove-all-unused-imports .
 
 start:
 	python main.py
