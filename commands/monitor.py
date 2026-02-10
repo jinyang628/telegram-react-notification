@@ -6,7 +6,7 @@ from telegram.ext import ContextTypes
 from constants import DB_PATH
 
 
-def _extract_notify_time_sgt(
+def _extract_notify_time(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> str | None:
     """
@@ -63,9 +63,9 @@ async def monitor_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_msg = update.message.reply_to_message
     chat_id = target_msg.chat_id
     message_id = target_msg.message_id
-    raw_time: str | None = _extract_notify_time_sgt(update, context)
-    notify_time_sgt: str | None = _normalize_hhmm(raw_time)
-    if raw_time and not notify_time_sgt:
+    raw_time: str | None = _extract_notify_time(update, context)
+    notify_time: str | None = _normalize_hhmm(raw_time)
+    if raw_time and not notify_time:
         await update.message.reply_text(
             "⚠️ Invalid time format.\n\n"
             "**Usage:** Reply to a message with `/monitor HH:MM` (24h) to set notify time.\n"
@@ -77,22 +77,22 @@ async def monitor_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute(
-        "INSERT OR REPLACE INTO monitored_message (id, chat_id, message_id, notify_time_sgt) VALUES (1, ?, ?, ?)",
-        (chat_id, message_id, notify_time_sgt),
+        "INSERT OR REPLACE INTO monitored_message (id, chat_id, message_id, notify_time) VALUES (1, ?, ?, ?)",
+        (chat_id, message_id, notify_time),
     )
     cur.execute("DELETE FROM pending_dm WHERE sent = 0")
     conn.commit()
     conn.close()
 
     when_line = (
-        f"\n\n⏰ **Notify at:** `{notify_time_sgt}`"
-        if notify_time_sgt
+        f"\n\n⏰ **Notify at:** `{notify_time}`"
+        if notify_time
         else "\n\n⏰ **Notify:** default delay (no time set)"
     )
     await update.message.reply_text(
-        f"🔥 **AVALON MONITOR ACTIVE** 🔥\n"
+        f"🔥 **Game Time Scheduled Reminder** 🔥\n"
         f"━━━━━━━━━━━━━━\n"
-        f"I am now tracking reactions on the message above!"
+        f"I will send a message 15 minutes before the game starts and tag everyone who has reacted!"
         f"{when_line}",
         parse_mode=constants.ParseMode.MARKDOWN,
     )
