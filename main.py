@@ -36,9 +36,9 @@ async def monitor_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 1. Ensure it's a reply
     if not update.message.reply_to_message:
         await update.message.reply_text(
-            "⚠️ **Explicit Action Required**\n\n"
+            "⚠️ **Explicit Reply Required**\n\n"
             "To monitor a message, you must **reply** to that specific message "
-            "with `/monitor` or mention me.",
+            "with `/monitor`",
             parse_mode=constants.ParseMode.MARKDOWN,
         )
         return
@@ -59,11 +59,9 @@ async def monitor_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Visual Confirmation
     await update.message.reply_text(
-        f"🎯 **Target Locked**\n"
+        f"Holy shit it is time for 🔥AVALON🔥\n"
         f"━━━━━━━━━━━━━━\n"
-        f"📝 **Monitoring Msg ID:** `{message_id}`\n"
-        f"👥 **Action:** I will tag anyone who reacts to the message above.\n\n"
-        f"_Note: Any previous monitored messages have been cleared._",
+        f"I will tag everyone who reacted to this message 15 mins before game starts so everyone comes on time",
         parse_mode=constants.ParseMode.MARKDOWN,
     )
 
