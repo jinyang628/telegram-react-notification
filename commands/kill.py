@@ -6,7 +6,7 @@ from telegram.ext import ContextTypes
 from constants import DB_PATH
 
 
-async def kill_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def kill_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Clears all monitoring data and pending notifications."""
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()

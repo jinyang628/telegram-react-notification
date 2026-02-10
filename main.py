@@ -6,9 +6,9 @@ from dotenv import load_dotenv
 from telegram.ext import (ApplicationBuilder, CommandHandler, MessageHandler,
                           MessageReactionHandler, filters)
 
-from commands.kill import kill_monitor
-from commands.monitor import monitor_trigger
+from commands.kill import kill_game
 from commands.nag import nag_non_reactors_job
+from commands.start import start_game
 from constants import DB_PATH, POLL_INTERVAL
 from utils import check_pending_mentions, on_reaction, track_users
 
@@ -47,17 +47,17 @@ def main():
     init_db()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("monitor", monitor_trigger))
-    app.add_handler(CommandHandler("kill", kill_monitor))
+    app.add_handler(CommandHandler("start", start_game))
+    app.add_handler(CommandHandler("kill", kill_game))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, track_users))
     app.add_handler(
         MessageHandler(
-            filters.Mention(BOT_USERNAME) & filters.Regex(r"monitor"), monitor_trigger
+            filters.Mention(BOT_USERNAME) & filters.Regex(r"start"), start_game
         )
     )
     app.add_handler(
         MessageHandler(
-            filters.Mention(BOT_USERNAME) & filters.Regex(r"kill"), kill_monitor
+            filters.Mention(BOT_USERNAME) & filters.Regex(r"kill"), kill_game
         )
     )
     app.add_handler(MessageReactionHandler(on_reaction))
