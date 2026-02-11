@@ -34,6 +34,9 @@ def init_db():
     cur.execute(
         "CREATE TABLE IF NOT EXISTS seen_users (user_id INTEGER, chat_id INTEGER, full_name TEXT, PRIMARY KEY (user_id, chat_id))"
     )
+    cur.execute(
+        "CREATE TABLE IF NOT EXISTS nagged_users (user_id INTEGER, chat_id INTEGER, message_id INTEGER, PRIMARY KEY (user_id, message_id))"
+    )
     cur.execute("PRAGMA table_info(pending_dm)")
     cur.execute(
         "CREATE TABLE IF NOT EXISTS monitored_message (id INTEGER PRIMARY KEY CHECK (id = 1), chat_id INTEGER, message_id INTEGER, notify_time TEXT, threshold INTEGER)"

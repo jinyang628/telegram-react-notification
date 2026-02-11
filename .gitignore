@@ -1,3 +1,4 @@
 .venv
 .env
 reactions.db
+__pycache__/
