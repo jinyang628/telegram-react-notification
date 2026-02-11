@@ -64,7 +64,11 @@ async def start_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=constants.ParseMode.MARKDOWN,
         )
         return
-    if not raw_threshold.isdigit() or int(raw_threshold) <= 0 or int(raw_threshold) > 10:
+    if (
+        not raw_threshold.isdigit()
+        or int(raw_threshold) <= 0
+        or int(raw_threshold) > 10
+    ):
         await update.message.reply_text(
             "Please issue a command containing a valid threshold between 1 and 10",
             parse_mode=constants.ParseMode.MARKDOWN,

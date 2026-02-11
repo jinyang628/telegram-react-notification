@@ -1,8 +1,10 @@
 import logging
 import os
 import sqlite3
+import threading
 
 from dotenv import load_dotenv
+from flask import Flask
 from telegram.ext import (ApplicationBuilder, CommandHandler, MessageHandler,
                           MessageReactionHandler, filters)
 
@@ -12,11 +14,24 @@ from commands.start import start_game
 from constants import DB_PATH, POLL_INTERVAL
 from utils import check_pending_mentions, on_reaction, track_users
 
+# Create a tiny Flask app for Render's health check
+flask_app = Flask(__name__)
+
 logging.basicConfig(format="%(levelname)s - %(message)s", level=logging.INFO)
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+PORT = os.getenv("PORT")
 BOT_USERNAME = "@MessageReactorsBot"
+
+
+@flask_app.route("/status")
+def health_check():
+    return "Bot is alive!", 200
+
+
+def run_flask():
+    flask_app.run(host="0.0.0.0", port=PORT)
 
 
 def init_db():
@@ -48,6 +63,8 @@ def init_db():
 
 def main():
     init_db()
+    threading.Thread(target=run_flask, daemon=True).start()
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_game))
