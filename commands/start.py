@@ -64,11 +64,7 @@ async def start_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=constants.ParseMode.MARKDOWN,
         )
         return
-    if (
-        not raw_threshold.isdigit()
-        or int(raw_threshold) <= 0
-        or int(raw_threshold) > 10
-    ):
+    if not raw_threshold.isdigit() or int(raw_threshold) <= 0 or int(raw_threshold) > 10:
         await update.message.reply_text(
             "Please issue a command containing a valid threshold between 1 and 10",
             parse_mode=constants.ParseMode.MARKDOWN,
@@ -81,8 +77,8 @@ async def start_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔥 **AVALON** 🔥\n"
         f"━━━━━━━━━━━━━━\n"
         f"{time_line}"
-        f"🚨 **Target:** `{threshold}` players needed\n\n"
-        f"👇 **REACT WITH ANY EMOJI TO JOIN!**"
+        f"👇 React if you are coming \n\n"
+        f"🚨 Minimum `{threshold}` reacts else we cancel"
     )
 
     sent_message = await update.message.reply_text(
